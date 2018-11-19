@@ -14,6 +14,10 @@ using namespace sketch;
 using circ::roundup;
 using hll::hll_t;
 
+#ifndef BUFFER_FLUSH_SIZE
+#define BUFFER_FLUSH_SIZE (1u << 18)
+#endif
+
 namespace bns {
 enum EmissionType {
     MASH_DIST = 0,
@@ -243,13 +247,6 @@ int sketch_main(int argc, char *argv[]) {
     return EXIT_SUCCESS;
 }
 
-struct LockSmith {
-    // Simple lock-holder to avoid writing to the same file twice.
-    tthread::fast_mutex &m_;
-    LockSmith(tthread::fast_mutex &m): m_(m) {m_.lock();}
-    ~LockSmith() {m_.unlock();}
-};
-
 template<typename FType, typename=typename std::enable_if<std::is_floating_point<FType>::value>::type>
 size_t submit_emit_dists(const int pairfi, const FType *ptr, u64 hs, size_t index, ks::string &str, const std::vector<std::string> &inpaths, bool write_binary, bool use_scientific, const size_t buffer_flush_size=1ull<<18) {
     if(write_binary) {
@@ -296,34 +293,61 @@ void dist_loop(const int pairfi, std::vector<hll_t> &hlls, const std::vector<std
     for(size_t i = 0; i < hlls.size(); ++i) {
         hll_t &h1(hlls[i]); // TODO: consider working backwards and pop_back'ing.
         std::vector<FType> &dists = dps[i & 1];
+#if AVOID_COMPUTED_GOTO
         switch(emit_fmt) {
             case MASH_DIST: {
                 #pragma omp parallel for schedule(dynamic)
                 for(size_t j = i + 1; j < hlls.size(); ++j)
-                    dists[j - i - 1] = dist_index(jaccard_index(hlls[j], h1), ksinv);
+                    dists[j  i  1] = dist_index(jaccard_index(hlls[j], h1), ksinv);
                 break;
             }
             case JI: {
                 #pragma omp parallel for schedule(dynamic)
                 for(size_t j = i + 1; j < hlls.size(); ++j)
-                    dists[j - i - 1] = jaccard_index(hlls[j], h1);
+                    dists[j  i  1] = jaccard_index(hlls[j], h1);
                 break;
             }
             case SIZES: {
                 #pragma omp parallel for schedule(dynamic)
                 for(size_t j = i + 1; j < hlls.size(); ++j)
-                    dists[j - i - 1] = union_size(hlls[j], h1);
+                    dists[j  i  1] = union_size(hlls[j], h1);
                 break;
             }
             default:
                 __builtin_unreachable();
-        }
-        h1.free();
-        LOG_DEBUG("Finished chunk %zu of %zu\n", i + 1, hlls.size());
-#if !NDEBUG
-        if(i) LOG_DEBUG("Finished writing row %zu\n", submitter.get());
+		}
 #else
-        if(i) submitter.get();
+#pragma GCC diagnostic ignored "-Wpedantic"
+        static constexpr void *labels[] {&&MASH_DIST, &&JI, &&SIZES};
+        goto *labels[emit_fmt];
+        MASH_DIST: {
+            #pragma omp parallel for schedule(dynamic)
+            for(size_t j = i + 1; j < hlls.size(); ++j)
+                dists[j - i - 1] = dist_index(jaccard_index(hlls[j], h1), ksinv);
+            goto fr;
+        }
+        JI: {
+            #pragma omp parallel for schedule(dynamic)
+            for(size_t j = i + 1; j < hlls.size(); ++j)
+                dists[j - i - 1] = jaccard_index(hlls[j], h1);
+            goto fr;
+        }
+        SIZES: {
+            #pragma omp parallel for schedule(dynamic)
+            for(size_t j = i + 1; j < hlls.size(); ++j)
+                dists[j - i - 1] = union_size(hlls[j], h1);
+            goto fr;
+        }
+        fr:
+        h1.free();
+#pragma GCC diagnostic pop
+#endif
+        LOG_DEBUG("Finished chunk %zu of %zu\n", i + 1, hlls.size());
+        if(i)
+#if !NDEBUG
+            LOG_DEBUG("Finished writing row %zu\n", submitter.get());
+#else
+            submitter.get();
 #endif
         submitter = std::async(std::launch::async, submit_emit_dists<FType>, pairfi, dists.data(), hlls.size(), i, std::ref(str), std::ref(inpaths), write_binary, use_scientific, buffer_flush_size);
     }
@@ -418,47 +442,39 @@ int dist_main(int argc, char *argv[]) {
     std::vector<sketch::cm::ccm_t> cms;
     std::vector<hll_t> hlls;
     KSeqBufferHolder kseqs(nthreads);
-    switch(sm) {
-        case CBF: case BY_FNAME: {
-            const auto cmsketchsize = fsz2countcm(
-                std::accumulate(inpaths.begin(), inpaths.end(), 0u,
-                                [](unsigned x, const auto &y) ->unsigned {return std::max(x, (unsigned)bns::filesize(y.data()));}),
-                factor
-            );
-            unsigned nbits = std::log2(mincount) + 1;
-            while(cms.size() < static_cast<unsigned>(nthreads))
-                cms.emplace_back(nbits, cmsketchsize, nhashes, cms.size() * 1337u);
-            break;
-        }
-        case EXACT: default: break;
+    if(sm == CBF || sm == BY_FNAME) {
+        const auto cmsketchsize = fsz2countcm(
+            std::accumulate(inpaths.begin(), inpaths.end(), 0u,
+                            [](unsigned x, const auto &y) ->unsigned {return std::max(x, (unsigned)bns::filesize(y.data()));}),
+            factor
+        );
+        unsigned nbits = std::log2(mincount) + 1;
+        while(cms.size() < static_cast<unsigned>(nthreads))
+            cms.emplace_back(nbits, cmsketchsize, nhashes, cms.size() * 1337u);
     }
     hlls.reserve(inpaths.size());
     while(hlls.size() < inpaths.size()) hlls.emplace_back(hll_t(sketch_size, estim, jestim, 1, clamp));
-    {
-        // Scope to force deallocation of scratch_vv.
-        std::vector<std::vector<std::string>> scratch_vv(nthreads, std::vector<std::string>{"empty"});
-        if(wsz < sp.c_) wsz = sp.c_;
-        #pragma omp parallel for
-        for(size_t i = 0; i < hlls.size(); ++i) {
-            const std::string &path(inpaths[i]);
-            static const std::string suf = ".gz";
-            if(presketched_only) hlls[i].read(path);
-            else {
-                const std::string fpath(hll_fname(path.data(), sketch_size, wsz, k, sp.c_, spacing, suffix, prefix));
-                const bool isf = isfile(fpath);
-                if(cache_sketch && isf) {
-                    LOG_DEBUG("Sketch found at %s with size %zu, %u\n", fpath.data(), size_t(1ull << sketch_size), sketch_size);
-                    hlls[i].read(fpath);
+    if(wsz < sp.c_) wsz = sp.c_;
+    #pragma omp parallel for
+    for(size_t i = 0; i < hlls.size(); ++i) {
+        const std::string &path(inpaths[i]);
+        static const std::string suf = ".gz";
+        if(presketched_only) hlls[i].read(path);
+        else {
+            const std::string fpath(hll_fname(path.data(), sketch_size, wsz, k, sp.c_, spacing, suffix, prefix));
+            const bool isf = isfile(fpath);
+            if(cache_sketch && isf) {
+                LOG_DEBUG("Sketch found at %s with size %zu, %u\n", fpath.data(), size_t(1ull << sketch_size), sketch_size);
+                hlls[i].read(fpath);
+            } else {
+                const int tid = omp_get_thread_num();
+                if(entropy_minimization) {
+                    FILL_SKETCH_MIN(score::Entropy);
                 } else {
-                    const int tid = omp_get_thread_num();
-                    if(entropy_minimization) {
-                        FILL_SKETCH_MIN(score::Entropy);
-                    } else {
-                        FILL_SKETCH_MIN(score::Lex);
-                    }
-#undef FILL_SKETCH_MIN
-                    if(cache_sketch && !isf) hlls[i].write(fpath, (reading_type == GZ ? 1: reading_type == AUTODETECT ? std::equal(suf.rbegin(), suf.rend(), fpath.rbegin()): false));
+                    FILL_SKETCH_MIN(score::Lex);
                 }
+#undef FILL_SKETCH_MIN
+                if(cache_sketch && !isf) hlls[i].write(fpath, (reading_type == GZ ? 1: reading_type == AUTODETECT ? std::equal(suf.rbegin(), suf.rend(), fpath.rbegin()): false));
             }
         }
     }
@@ -493,7 +509,8 @@ int dist_main(int argc, char *argv[]) {
         Encoder<score::Lex> enc(sp);
         const char *fmt = use_scientific ? "\t%e": "\t%lf";
         for(const auto &path: querypaths) {
-            gzFile fp = gzopen(path.data(), "rb");
+            gzFile fp;
+            if((fp = gzopen(path.data(), "rb")) == nullptr) throw std::runtime_error(std::string("Could not open file at " + path));
             kseq_assign(&ks, fp);
             if(sketch_query_by_seq) {
                 while(kseq_read(&ks) >= 0) {
@@ -534,10 +551,9 @@ int dist_main(int argc, char *argv[]) {
             str.back() = '\n';
             str.write(fileno(pairofp)); str.free();
         }
-        if(emit_float)
-            dist_loop<float>(fileno(pairofp), hlls, inpaths, use_scientific, k, emit_fmt, write_binary);
-        else
-            dist_loop<double>(fileno(pairofp), hlls, inpaths, use_scientific, k, emit_fmt, write_binary);
+        auto fn_ptr = emit_float ? dist_loop<float> :dist_loop<double>;
+        static constexpr uint32_t buffer_flush_size = BUFFER_FLUSH_SIZE;
+        fn_ptr(fileno(pairofp), hlls, inpaths, use_scientific, k, emit_fmt, write_binary, buffer_flush_size);
     }
     if(write_binary) {
         if(pairofp_labels.empty()) pairofp_labels = "unspecified";
