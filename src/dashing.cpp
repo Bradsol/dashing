@@ -19,6 +19,20 @@ using hll::hll_t;
 #define BUFFER_FLUSH_SIZE (1u << 18)
 #endif
 
+#if ENABLE_KSEQ_SHRINKAGE
+#define __ks_shrink_to_fit(x) \
+        do {\
+            kstring_t &kseq = x;\
+            if((kseq.m>>1) > (kseq.l)) {\
+                kseq.m = roundup(kseq.l);\
+                kseq.l = 0;\
+                kseq.s = static_cast<char *>(std::realloc(kseq.s, kseq.m));\
+            }\
+        } while(0)
+#else
+#define __ks_shrink_to_fit(x)
+#endif
+
 namespace bns {
 enum EmissionType {
     MASH_DIST = 0,
@@ -281,7 +295,9 @@ int sketch_main(int argc, char *argv[]) {
         }\
         h.write(write_to_dev_null ? "/dev/null": static_cast<const char *>(fname.data()), write_gz);\
         h.clear();\
+        __ks_shrink_to_fit(kseqs[tid].seq);\
     }
+
     if(entropy_minimization) {
         #pragma omp parallel for schedule(dynamic)
         MAIN_SKETCH_LOOP(bns::score::Entropy)
@@ -537,6 +553,7 @@ int dist_main(int argc, char *argv[]) {
                     } else {
                         FILL_SKETCH_MIN(score::Lex);
                     }
+                    __ks_shrink_to_fit(kseqs[tid].seq);
 #undef FILL_SKETCH_MIN
                     if(cache_sketch && !isf) hlls[i].write(fpath, (reading_type == GZ ? 1: reading_type == AUTODETECT ? std::equal(suf.rbegin(), suf.rend(), fpath.rbegin()): false));
                 }
