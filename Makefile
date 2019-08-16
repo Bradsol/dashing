@@ -50,7 +50,7 @@ ZSTD_INCLUDE_DIRS=bonsai/zstd/zlibWrapper bonsai/zstd/lib/common bonsai/zstd/lib
 ZSTD_INCLUDE=$(patsubst %,-I%,$(ZSTD_INCLUDE_DIRS))
 ZFLAGS=-DZWRAP_USE_ZSTD=1
 ZCOMPILE_FLAGS= $(ZFLAGS) -lzstd
-ZW_OBJS=$(patsubst %.c,%.o,$(wildcard bonsai/zstd/zlibWrapper/*.c)) libzstd.a
+ZW_OBJS=$(patsubst %.c,%.o,bonsai/zstd/zlibWrapper/gzclose.c  bonsai/zstd/zlibWrapper/gzlib.c  bonsai/zstd/zlibWrapper/gzread.c  bonsai/zstd/zlibWrapper/gzwrite.c  bonsai/zstd/zlibWrapper/zstd_zlibwrapper.c) libzstd.a
 ALL_ZOBJS=$(ZOBJS) $(ZW_OBJS) bonsai/bonsai/clhash.o bonsai/klib/kthread.o
 INCLUDE=-Ibonsai/clhash/include -I.  -Ibonsai/zlib -Ibonsai/libpopcnt -Iinclude -Ibonsai/circularqueue $(ZSTD_INCLUDE) $(INCPLUS) -Ibonsai/hll -Ibonsai/hll/vec -Ibonsai -Ibonsai/bonsai/include/
 
@@ -63,18 +63,18 @@ all: dashing
 d: $(D_EX)
 
 update:
-	+git submodule update --init --remote --recursive . && cd bonsai && git checkout master && git pull && make update && \
+	+git submodule update --init --remote --recursive . && cd bonsai && git checkout master && git pull && $(MAKE) update && \
     cd linear && git checkout master && git pull && cd .. && cd .. && cd distmat && git checkout master && git pull && cd ..
 
 libzstd.a:
-	+cd bonsai/bonsai && make libzstd.a && cp libzstd.a ../../
+	+cd bonsai/bonsai && $(MAKE) libzstd.a && cp libzstd.a ../../
 
 bonsai/klib/kstring.o:
-	+cd bonsai/bonsai && make ../klib/kstring.o && cd ../.. && \
-	cd bonsai/bonsai && make ../klib/kthread.o && cd ../..
+	+cd bonsai/bonsai && $(MAKE) ../klib/kstring.o && cd ../.. && \
+	cd bonsai/bonsai && $(MAKE) ../klib/kthread.o && cd ../..
 
 bonsai/bonsai/clhash.o:
-	+cd bonsai/bonsai && make clhash.o && cd ../..
+	+cd bonsai/bonsai && $(MAKE) clhash.o && cd ../..
 
 OBJ=bonsai/klib/kstring.o bonsai/klib/kthread.o bonsai/bonsai/clhash.o
 
@@ -96,21 +96,30 @@ test/%.zo: test/%.cpp
 	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) -c $< -o $@ $(LIB)
 
 bonsai/zlib/libz.a:
-	+cd bonsai/zlib && ./configure && make libz.a
+	+cd bonsai/zlib && ./configure && $(MAKE)
 
 bonsai/zlib/libz.so:
-	+cd bonsai/zlib && ./configure && make && ls libz.so
+	+cd bonsai/zlib && ./configure && $(MAKE)
 
 zobj: $(ALL_ZOBJS)
 
 STATIC_GOMP?=$(shell $(CXX) --print-file-name=libgomp.a)
 
-# bonsai/zlib/libz.so
-%: src/%.cpp $(ALL_ZOBJS) $(DEPS)
-	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) $(ALL_ZOBJS) -O3 $< -o $@ $(ZCOMPILE_FLAGS) $(LIB) -DNDEBUG
+libz.so: bonsai/zlib/libz.so
+	cp bonsai/zlib/libz* .
 
-%0: src/%.cpp $(ALL_ZOBJS) $(DEPS)
-	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) $(ALL_ZOBJS) -O3 $< -o $@ $(ZCOMPILE_FLAGS) $(LIB) -O0
+bonsai/zstd/zlibWrapper/%.c:
+	cd bonsai/bonsai && $(MAKE) libzstd.a
+
+bonsai/zstd/zlibWrapper/%.o: bonsai/zstd/zlibWrapper/%.c
+	cd bonsai/bonsai && $(MAKE) libzstd.a && cd ../zstd && $(MAKE) lib  && cd zlibWrapper && $(MAKE) $(notdir $@)
+libz.a: bonsai/zlib/libz.a
+	cp $< $@
+%: src/%.o $(ALL_ZOBJS) $(DEPS) libz.so libzstd.a
+	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) $(ALL_ZOBJS) libz.a -O3 $< -o $@ $(ZCOMPILE_FLAGS) $(LIB) -DNDEBUG
+
+%0: src/%.cpp $(ALL_ZOBJS) $(DEPS) libz.so libzstd.a
+	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) $(ALL_ZOBJS) libz.a -O3 $< -o $@ $(ZCOMPILE_FLAGS) $(LIB)
 
 src/%.o: src/%.cpp $(ALL_ZOBJS) $(DEPS) bonsai/zlib/libz.so
 	$(CXX) $(CXXFLAGS) $(DBG) $(INCLUDE) $(LD) $(ALL_ZOBJS) -c -O3 $< -o $@ $(ZCOMPILE_FLAGS) $(LIB) -DNDEBUG
@@ -154,17 +163,18 @@ libgomp.a:
 
 linux_release:
 	+rm -f dashing_s128 dashing_s256 dashing_s512 && \
-		make dashing_s128 dashing_s256 dashing_s512 && \
+		$(MAKE) dashing_s128 dashing_s256 dashing_s512 && \
 		mv dashing_s128 dashing_s256 dashing_s512 release/linux && \
 		cd release/linux && gzip -f9 dashing_s128 dashing_s256 dashing_s512
 osx_release:
 	+rm -f dashing_s128 dashing_s256 && \
-		make dashing_s128 dashing_s256 && \
+		$(MAKE) dashing_s128 dashing_s256 && \
 		mv dashing_s128 dashing_s256 release/osx && \
 		cd release/osx && gzip -f9 dashing_s128 dashing_s256
 clean:
 	rm -f $(EX) $(D_EX) libzstd.a bonsai/bonsai/clhash.o clhash.o \
 	bonsai/klib/kthread.o bonsai/klib/kstring.o libgomp.a \
-	&& cd bonsai/zstd && make clean && cd ../zlib && make clean && cd ../..
+	&& cd bonsai/zstd && $(MAKE) clean && cd ../zlib && $(MAKE) clean && cd ../.. \
+	&& rm -f libz.*
 mostlyclean: clean
 sparse: readfilt sparsereadfilt
