@@ -804,7 +804,9 @@ int sketch_main(int argc, char *argv[]) {
         : std::vector<std::string>(argv + optind, argv + argc));
     LOG_INFO("Sketching genomes with sketch: %d/%s\n", sketch_type, sketch_names[sketch_type]);
     if(inpaths.empty()) {
-        std::fprintf(stderr, "No paths. See usage.\n");
+        std::fprintf(stderr, "No paths. See usage.\nCommand line: '");
+        for(auto p = argv; *p;) {std::fputs(*p++, stderr); if(*p) std::fputc(' ', stderr);}
+        std::fputc('\n', stderr);
         sketch_usage(*argv);
     }
     if(!avoid_fsorting)
@@ -1513,6 +1515,14 @@ int print_binary_main(int argc, char *argv[]) {
     return EXIT_SUCCESS;
 }
 
+void show_cmd(const std::vector<char *> &args) {
+    size_t i;
+    std::fprintf(stderr, "command:\n\n");
+    for(i = 0; i < args.size() - 1;std::fprintf(stderr, "%s ", args[i++]))
+    std::fputs(args.back(), stderr);
+    std::fputc('\n', stderr);
+}
+
 int mkdist_main(int argc, char *argv[]) {
     auto it = std::find_if(argv, argv + argc, [](auto x) {return std::strcmp("--multik", x) == 0;});
     std::string _outpref;
@@ -1531,20 +1541,26 @@ int mkdist_main(int argc, char *argv[]) {
         step = std::atoi(++pos);
         assert(step > 0 ? e > s: e < s);
     } else step = e > s ? 1: -1;
+    std::fprintf(stderr, "Parsed out step: %d\n", step);
     std::vector<std::string> ea(2);
     for(auto &i: ea) i.resize(_outpref.size() + 32);
-    std::vector<char *> args(argv, argv + argc);
+    std::string diststr = "dist";
+    std::vector<char *> args({&diststr[0]});
+    for(auto p = argv + 1; *p; args.push_back(*p++));
     size_t nk = 0;
     std::vector<std::string> fpaths;
     for(int ind = s; (e > s ? ind < e: ind > e); ind += step) {
         char buf[256]{0};
-        ea[0] = std::string(buf, std::sprintf(buf, "-bO_%s_%d", outpref, ind));
-        ea[1] = std::string(buf, std::sprintf(buf, "-k%d", ind));
+        std::sprintf(buf, "-bO_%s_%d", outpref, ind);
+        ea[0] = buf;
+        std::sprintf(buf, "-k%d", ind);
+        ea[1] = buf;
         fpaths.push_back(std::string(buf, std::sprintf(buf, "_%s_%d", outpref, ind)));
         size_t j = std::find_if(argv, argv + argc, [](auto x) {return std::strcmp("--multik", x) == 0;}) - argv;
         assert(j != argc);
         args[j] = &ea[0][0];
-        args[1] = &ea[1][0];
+        args[j + 1] = &ea[1][0];
+        show_cmd(args);
         dist_main(args.size(), args.data());
         ++nk;
     }
