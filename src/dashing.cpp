@@ -654,7 +654,7 @@ T construct(size_t ssarg) {
 template<> mh::BBitMinHasher<uint64_t> construct<mh::BBitMinHasher<uint64_t>>(size_t p) {return mh::BBitMinHasher<uint64_t>(p, gargs.bbnbits);}
 
 template<typename SketchType>
-void sketch_core(uint32_t ssarg, uint32_t nthreads, uint32_t wsz, uint32_t k, const Spacer &sp, const std::vector<std::string> &inpaths, const std::string &suffix, const std::string &prefix, std::vector<cm::ccm_t> &cms, EstimationMethod estim, JointEstimationMethod jestim, KSeqBufferHolder &kseqs, const std::vector<bool> &use_filter, const std::string &spacing, bool skip_cached, bool canon, uint32_t mincount, bool entropy_minimization, EncodingType enct=BONSAI) {
+void sketch_core(uint32_t ssarg, uint32_t nthreads, uint32_t wsz, uint32_t k, const Spacer &sp, const std::vector<std::string> &inpaths, const std::string &suffix, const std::string &prefix, std::vector<CountingType> &cms, EstimationMethod estim, JointEstimationMethod jestim, KSeqBufferHolder &kseqs, const std::vector<bool> &use_filter, const std::string &spacing, bool skip_cached, bool canon, uint32_t mincount, bool entropy_minimization, EncodingType enct=BONSAI) {
     std::vector<SketchType> sketches;
     uint32_t sketch_size = bytesl2_to_arg(ssarg, SketchEnum<SketchType>::value);
     while(sketches.size() < (u32)nthreads) sketches.push_back(construct<SketchType>(sketch_size)), set_estim_and_jestim(sketches.back(), estim, jestim);
@@ -802,7 +802,7 @@ int sketch_main(int argc, char *argv[]) {
     omp_set_num_threads(nthreads);
     Spacer sp(k, wsz, parse_spacing(spacing.data(), k));
     std::vector<bool> use_filter;
-    std::vector<cm::ccm_t> cms;
+    std::vector<CountingType> cms;
     std::vector<std::string> inpaths(paths_file.size() && isfile(paths_file) 
         ? get_paths(paths_file.data())
         : std::vector<std::string>(argv + optind, argv + argc));
@@ -1143,7 +1143,7 @@ enum CompReading: unsigned {
             else if(enct == NTHASH) for_each_substr([&](const char *s) {enc.for_each_hash([&](u64 kmer){h.addh(kmer);}, s, &kseqs[tid]);}, inpaths[i], FNAME_SEP);\
             else for_each_substr([&](const char *s) {rolling_hasher.for_each_hash([&](u64 kmer){h.addh(kmer);}, s, &kseqs[tid]);}, inpaths[i], FNAME_SEP);\
         } else {\
-            sketch::cm::ccm_t &cm = cms.at(tid);\
+            CountingType &cm = cms.at(tid);\
             const auto lfunc = [&](u64 kmer){if(cm.addh(kmer) >= mincount) sketch.addh(kmer);};\
             if(enct == BONSAI)      for_each_substr([&](const char *s) {enc.for_each(lfunc, s, &kseqs[tid]);}, inpaths[i], FNAME_SEP);\
             else if(enct == NTHASH) for_each_substr([&](const char *s) {enc.for_each_hash(lfunc, s, &kseqs[tid]);}, inpaths[i], FNAME_SEP);\
@@ -1156,7 +1156,7 @@ enum CompReading: unsigned {
 
 
 template<typename SketchType>
-void dist_sketch_and_cmp(const std::vector<std::string> &inpaths, std::vector<sketch::cm::ccm_t> &cms, KSeqBufferHolder &kseqs, std::FILE *ofp, std::FILE *pairofp,
+void dist_sketch_and_cmp(const std::vector<std::string> &inpaths, std::vector<CountingType> &cms, KSeqBufferHolder &kseqs, std::FILE *ofp, std::FILE *pairofp,
                          Spacer sp,
                          unsigned ssarg, unsigned mincount, EstimationMethod estim, JointEstimationMethod jestim, bool cache_sketch, EmissionType result_type, EmissionFormat emit_fmt,
                          bool presketched_only, unsigned nthreads, bool use_scientific, std::string suffix, std::string prefix, bool canon, bool entropy_minimization, std::string spacing,
@@ -1429,7 +1429,7 @@ int dist_main(int argc, char *argv[]) {
         decltype(querypaths) tmp;
         std::swap(tmp, querypaths);
     }
-    std::vector<sketch::cm::ccm_t> cms;
+    std::vector<CountingType> cms;
     KSeqBufferHolder kseqs(nthreads);
     switch(sm) {
         case CBF: case BY_FNAME: {

@@ -10,6 +10,7 @@
 #include "hll/bbmh.h"
 #include "hll/mh.h"
 #include "hll/mult.h"
+#include "hll/hk.h"
 #include "khset/khset.h"
 #include "distmat/distmat.h"
 #include <sstream>
@@ -27,6 +28,7 @@
 #endif
 
 namespace bns {
+using namespace sketch;
 static const char *executable = nullptr;
 static std::string get_executable() {
     return executable ? std::string(executable): "unspecified";
@@ -45,6 +47,9 @@ int setdist_main(int argc, char *argv[]);
 int hll_main(int argc, char *argv[]);
 int union_main(int argc, char *argv[]);
 int view_main(int argc, char *argv[]);
+
+using CountingType = hk::HeavyKeeper<18,14>;
+
 }
 
 #endif /* DASHING_H__ */
