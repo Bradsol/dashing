@@ -591,6 +591,8 @@ void dist_usage(const char *arg);
 void sketch_usage(const char *arg);
 void flatten_usage();
 void union_usage [[noreturn]] (char *ex);
+void dt_print_usage [[noreturn]] (char *ex);
+
 int sketch_main(int argc, char *argv[]);
 int dist_main(int argc, char *argv[]);
 int print_binary_main(int argc, char *argv[]);
@@ -600,6 +602,7 @@ int setdist_main(int argc, char *argv[]);
 int hll_main(int argc, char *argv[]);
 int union_main(int argc, char *argv[]);
 int view_main(int argc, char *argv[]);
+int dt_print_main(int argc, char *argv[]);
 }
 
 #endif /* DASHING_H__ */

@@ -22,7 +22,8 @@ int main(int argc, char *argv[]) {
     else if(std::strcmp(argv[1], "mkdist") == 0) return mkdist_main(argc - 1, argv + 1);
     else if(std::strcmp(argv[1], "flatten") == 0) return flatten_main(argc - 1, argv + 1);
     else if(std::strcmp(argv[1], "printmat") == 0) return print_binary_main(argc - 1, argv + 1);
-    else {
+    else if(std::strcmp(argv[1], "dt_print") == 0) return dt_print_main(argc - 1, argv + 1);
+	else {
         for(const char *const *p(argv + 1); *p; ++p) {
             std::string v(*p);
             std::transform(v.begin(), v.end(), v.begin(), [](auto c) {return std::tolower(c);});

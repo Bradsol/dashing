@@ -375,6 +375,20 @@ void union_usage [[noreturn]] (char *ex) {
     std::exit(1);
 }
 
+void dt_print_usage [[noreturn]] (char *ex) {
+    std::fprintf(stderr, "Usage: %s genome1 \n"
+                         "Flags:\n"
+                         "-o: Write register values as ints to file [/dev/stdout]\n"
+                         "-z: Emit compressed sketch\n"
+                         "-Z: Set gzip compression level\n"
+                         "-r: RangeMinHash sketches\n"
+                         "-H: Full Khash Sets\n"
+                         "-b: Bloom Filters\n"
+                ,
+                 ex);
+    std::exit(1);
+}
+
 int view_main(int argc, char *argv[]) {
     if(argc < 2) RUNTIME_ERROR("Usage: dashing view f1.hll [f2.hll ...]. Only HLLs currently supported.");
     for(int i = 1; i < argc; hll::hll_t(argv[i++]).printf(stdout));
